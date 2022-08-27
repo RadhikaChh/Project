@@ -1,0 +1,262 @@
+---
+title: "Lab2 Binary logistic regression"
+author: " "
+date: ' '
+output: html_document
+---
+
+## Context
+
+```{r setup, include=FALSE}
+options(width = 200)
+knitr::opts_chunk$set(echo =TRUE, comment = NA, message=FALSE, warning = FALSE, error=FALSE)
+```
+
+A cross sectional study was conducted to investigate the association between different activity levels and occurrence of myopia among school children of age between 5-9. 618 children were recruited and following variables were measured:  
+
+variable name | description
+---------------|------------
+age | Age (Years)
+gender | Gender (1: Male, 2: Female)
+spheq | Spherical Equivalent Refraction (diopter)
+al | Axial length (mm)
+acd | Anterior Chamber Depth (mm)
+lt | Lens Thickness (mm)
+vcd | Vitreous Chamber Depth (mm)
+sporthr | How many hours per week outside of school the child spent engaging in sports/outdoor activities (Hours per week)   
+readhr | How many hours per week outside of school the child spent reading for pleasure (Hours per week)     
+comphr | How many hours per week outside of school the child spent playing video/computer games or working on the computer (Hours per week)     
+studyhr | How many hours per week outside of school the child spent reading or studying for school assignments (Hours per week)    
+tvhr | How many hours per week outside of school the child spent watching television (Hours per week)    
+diopterhr | Composite of near-work activities (Hours per week)     
+mommy | Was the subject's mother myopic? (1: No, 2: Yes)    
+dadmy | Was the subject's father myopic? (1: No, 2: Yes)  
+ 
+The data is available from the 'aplore' package. 
+
+# Research Question  
+**To estimate the extend to which hours spend outside school engagin in sports/outdoor activity is associated with risk of myopia among children below 10 years of age**
+
+### Loading necessary libraries   
+```{r}
+library(Hmisc)
+library(tidyverse)
+library(tableone)
+library(stargazer)
+library(aplore3)
+```
+
+### Importing the data
+```{r}
+data(myopia)
+```
+
+```{r}
+skimr::skim(myopia)
+```
+There are no missing values in the dataset. There are 4 categorical variables and 12 continuous variables. There are some large values in sport/outdoor activities hours (40!).
+
+## Descriptive statistics
+### Continuous variables
+```{r}
+layout(matrix(c(1:12), nrow=2, ncol=3, byrow = F))
+for(i in c("age","spheq","al","acd","lt","vcd","sporthr","readhr","comphr","studyhr","tvhr","diopterhr")){
+  boxplot(myopia[[i]], main=paste("Box plot of", i))
+  hist(myopia[[i]], main=paste("Histogram of", i), xlab=paste(i))
+}
+```
+
++ Most of the variables have outliers 
+
+### Categorical variables
+```{r}
+tab1 <- CreateTableOne(data=myopia, 
+                       vars=c("myopic","gender","mommy","dadmy"), includeNA = TRUE)
+print(tab1, showAllLevels=TRUE)
+```
+
++ Only 81 (13\%) participants have myopia. 
+
+## Bivariate relationships
+### Correlations
+Because most of the continuous variables are not normally distributed we will use spearman's correlation. 
+```{r}
+corr <- myopia %>% 
+  select(age,spheq,al,acd,lt,vcd,sporthr,readhr,comphr,studyhr,tvhr,diopterhr) %>%
+  cor(method="spearman") %>%
+  round(digits = 2)
+corr
+```
+
+**BEING FANCY**
+```{r}
+corrplot::corrplot(corr, method="color")
+```
+
++ vcd is highly correlated with al
++ Diopterhr variable seems to have moderate level correlations with some other activity variables
+
+
+## Contegency Tables
+```{r}
+descr::CrossTable(myopia$gender, myopia$mommy, prop.t=F, prop.chisq = F)
+descr::CrossTable(myopia$gender, myopia$dadmy, prop.t=F, prop.chisq=F)
+descr::CrossTable(myopia$mommy, myopia$dadmy, prop.t=F, prop.chisq=F)
+```
+
+**You can also easly see these distributions quickly by plotting**
+```{r}
+par(mfrow=c(1,3))
+plot(table(myopia$gender, myopia$mommy))
+plot(table(myopia$gender, myopia$dadmy))
+plot(table(myopia$dadmy, myopia$mommy))
+```
+
+## DAG
+
+Assuming that there are no unmeasured confounding between myopic and other variables in the data. We can construct a DAG to see what is the minimum adjustment set we need. 
+```{r}
+library(ggdag)
+
+coords = list(
+        x = c(mommy=2, dadmy=2, sporthr=2, readhr=2, comphr=2, studyhr=2, tvhr=2, diopterhr=2, myopic=4,
+              age=1, gender=1, spheq=3, al=3, acd=3, lt=3, vcd=3),
+        y = c(mommy=-4, dadmy=-3, readhr=-2, comphr=-1, sporthr=0, studyhr=1, tvhr=2, diopterhr=3, myopic=0,
+              age=-1, gender=1, spheq=-4, al=-3, acd=-2, lt=2, vcd=3)
+)
+
+dag1 <- dagify(myopic ~ age+gender+mommy+dadmy+sporthr+readhr+comphr+studyhr+tvhr+diopterhr+spheq+al+acd+lt+vcd,
+               mommy ~~ sporthr ,
+               dadmy ~~ sporthr,
+               sporthr ~~ readhr,
+               sporthr ~~ comphr,
+               sporthr ~~ studyhr,
+               sporthr ~~ tvhr,
+               sporthr ~~ diopterhr,
+               sporthr ~ age+gender,
+               readhr ~ age+gender,
+               comphr ~ age+gender,
+               studyhr ~ age+gender,
+               tvhr ~ age+gender,
+               diopterhr ~ age+gender,
+               spheq ~ age+gender+sporthr,
+               al ~ age+gender+sporthr,
+               acd ~ age+gender+sporthr,
+               lt ~ age+gender+sporthr,
+               vcd ~ age+gender+sporthr,
+              exposure ="sporthr",
+              outcome = "myopic", coords = coords)
+
+ggdag(dag1, node_size = 20)
+ggdag_adjustment_set(dag1)
+```
+
+Because we are interested in the total effect of sporthr, we will not adjust for the descendants of sporthr. 
+
+## Table 1
+We shall start with looking at the distribution of all variables across the outcome.
+```{r}
+tab2 <- CreateTableOne(vars=c("age","gender","sporthr","readhr","comphr","studyhr","tvhr", "diopterhr", "mommy","dadmy"), strata = "myopic", data=myopia, includeNA=TRUE, test=FALSE)
+print(tab2, showAllLevels=TRUE)
+```
+
++ Myopic kids had more average hours in sport/outdoor activity
++ There are slightly more Female kids among myopic group
++ Myopic kids had high proportion of participants with family history of myopia
+
+## Univariate logistic regression
+```{r}
+uniregs <- list()
+uniregs[[1]] <- glm(myopic ~ age, data=myopia, family=binomial(link="logit"))
+uniregs[[2]] <- glm(myopic ~ gender, data=myopia, family=binomial(link="logit"))
+uniregs[[3]] <- glm(myopic ~ sporthr, data=myopia, family=binomial(link="logit"))
+uniregs[[4]] <- glm(myopic ~ readhr, data=myopia, family=binomial(link="logit"))
+uniregs[[5]] <- glm(myopic ~ comphr, data=myopia, family=binomial(link="logit"))
+uniregs[[6]] <- glm(myopic ~ studyhr, data=myopia, family=binomial(link="logit"))
+uniregs[[7]] <- glm(myopic ~ tvhr, data=myopia, family=binomial(link="logit"))
+uniregs[[8]] <- glm(myopic ~ diopterhr, data=myopia, family=binomial(link="logit"))
+uniregs[[9]] <- glm(myopic ~ mommy, data=myopia, family=binomial(link="logit"))
+uniregs[[10]] <- glm(myopic ~ dadmy, data=myopia, family=binomial(link="logit"))
+
+stargazer(uniregs[1:5], type="text", report="vcs", ci=TRUE, omit.table.layout = "n", digits=2)
+stargazer(uniregs[6:10], type="text", report="vcs", ci=TRUE, omit.table.layout = "n", digits=2)
+```
+
++ age, gender(female), readhr, comphr, diopterhr, mommy, dadmy show positive association with myopic state
++ sporthr show negative association
++ interestingly, studyhr and tvhr show a negative association!
+
+## Multivariable logistic regression
+```{r}
+glm1 <- glm(myopic ~ age + gender + mommy + dadmy + 
+              sporthr + readhr + comphr + studyhr + tvhr + diopterhr , 
+            data=myopia, family=binomial(link="logit"))
+stargazer(glm1, type="text", report="vcs", ci=TRUE, omit.table.layout = "n", digits=2)
+```
+
+**The diopterhr variable do not have a coefficient. Probably due to high collinearity R took it out**  
+**We need to report the effect measures in Odds ratio scale**
+```{r}
+glm1 <- glm(myopic ~ age + gender + mommy + dadmy + 
+              sporthr + readhr + comphr + studyhr + tvhr , 
+            data=myopia, family=binomial(link="logit"))
+ors <- exp(coef(glm1))
+cis <- exp(confint.default(glm1))
+
+stargazer(glm1, type="text", report="vcs", coef=list(ors), ci.custom = list(cis), omit.table.layout = "n", digits=2)
+```
+
+## Interpretation 
+Each hour increase in hours spend outside school, engaging in sports/outdoor activities, per week decreased the odds of myopia by a factor of 0.96 (OR = 0.06, 95\%CI = 0.93, 0.99). 
+
+# Contrasts
+
++ What is the relative odds of myopia for a male child with both parents having with myopia, compared to a female child with no family history of myopia
+  + Create the two profiles first
+  + Contrast the profiles
+
+```{r}
+a = list(age=median(myopia$age), 
+         gender="Male",
+         mommy="Yes", 
+         dadmy="Yes",
+         sporthr=median(myopia$sporthr),
+         readhr=median(myopia$readhr),
+         comphr=median(myopia$comphr),
+         studyhr=median(myopia$studyhr),
+         tvhr=median(myopia$tvhr))
+
+b = list(age=median(myopia$age),
+         gender="Female",
+         mommy="No",
+         dadmy="No",
+         sporthr=median(myopia$sporthr),
+         readhr=median(myopia$readhr),
+         comphr=median(myopia$comphr),
+         studyhr=median(myopia$studyhr),
+         tvhr=median(myopia$tvhr))
+
+c1 <- contrast::contrast(glm1,a=a,b=b)
+c1
+```
+
+**You can equivalently create contrast setting other variables to zero**
+```{r, eval=FALSE}
+a = list(age=0,sporthr=0,readhr=0,comphr=0,studyhr=0,tvhr=0, gender="Male", mommy="Yes", dadmy="Yes")
+b = list(age=0,sporthr=0,readhr=0,comphr=0,studyhr=0,tvhr=0, gender="Female", mommy="No", dadmy="No")
+```
+
+**Contrast in odds ration scale**
+```{r}
+exp(cbind(OR=c1$Contrast, lower=c1$Lower, upper=c1$Upper)) %>% round(digits = 2)
+```
+
++ What is the effect each 5 hour increase in sports time?
+  + set all other variables to its reference category
+```{r}
+a1 = list(age=0,sporthr=5,readhr=0,comphr=0,studyhr=0,tvhr=0, gender="Male", mommy="No", dadmy="No")
+b1 = list(age=0,sporthr=0,readhr=0,comphr=0,studyhr=0,tvhr=0, gender="Male", mommy="No", dadmy="No")
+
+c2 <- contrast::contrast(glm1,a=a1,b=b1)
+exp(cbind(OR=c2$Contrast, lower=c2$Lower, upper=c2$Upper)) %>% round(digits = 2)
+```
