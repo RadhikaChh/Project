@@ -1,0 +1,347 @@
+---
+title: "lab 4"
+author: "J Brophy"
+date: '2019-01-05'
+output: html_document
+---
+
+```{r setup, include=FALSE, warning=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+## Set-up
+
+```{r }
+# required libraries
+library(epiR)
+library(dplyr)
+
+#read the dataset
+heart <- read.csv("heart.csv")
+#⁨Macintosh HD⁩ ▸ ⁨Users⁩ ▸ ⁨aal⁩ ▸ ⁨Dropbox⁩ ▸ ⁨603  2019⁩ ▸ ⁨labs⁩ ▸ ⁨lab lectures⁩ ▸ ⁨data⁩
+head(heart)
+#create binary variables in the order that we want (see last week's lab)
+heart$female <- factor(heart$gender, labels=c("female", "male"), levels= c(1,0))
+heart$fstat <- factor(heart$fstat, labels=c("died", "alive"), levels= c("dead", "alive"))
+heart$cvd <- factor(heart$cvd, labels=c("yes", "no"), levels=c("yes", "no"))
+
+
+```
+
+## Attributable fractions
+
+```{r  warning=FALSE, message=FALSE}
+
+# last week's approach (cohort.time example)
+events <- tapply(heart$fstat=="died", heart$female, sum)
+persontime <- tapply(heart$lenfol, heart$female, sum)
+tab_time <- cbind(events, persontime)
+tab_time
+epi.2by2(dat=tab_time, method="cohort.time", outcome = "as.columns")
+
+# using dplyr to get the same results
+tab <- heart %>% group_by(female) %>%
+    summarise(events = sum(fstat == "died"), persontime = sum(lenfol))
+
+# now dplyr objects are tibbles or data frames and epi.2by2 needs a table object so...
+tab1 <- tab %>% select(events, persontime) %>% as.matrix %>% as.table
+epi.2by2(dat=tab1, method="cohort.time", outcome = "as.columns")
+
+```
+
+
+## Confounding
+Back to `heart` dataset - is gender a confounder to the CVD? -> survival relationship.     
+### First is gender associated with death within strata of CVD?
+
+<font size="4">CVD Stratum: YES</font>
+
+````{r 3a CVD stratum yes}
+#risk ratio
+heartCvdYes <- subset(heart, cvd=="yes")
+table_female_fstat_cvd1 <- with(heartCvdYes, table(female, fstat))
+
+#check that the table is set up correctly 
+table_female_fstat_cvd1
+epi.2by2(table_female_fstat_cvd1, method="cohort.count")
+#does it appear that gender is associated with the outcome within those where CVD = yes? 
+
+#incidence rate ratio
+lenfol <- tapply(heartCvdYes$lenfol, heartCvdYes$female, sum)
+events <- tapply(heartCvdYes$fstat=="died", heartCvdYes$female, sum)
+table_female_time_cvd1 <- cbind(events,lenfol)
+table_female_time_cvd1
+epi.2by2(table_female_time_cvd1, method="cohort.time")
+#does it appear that gender is associated with the outcome within those where CVD = yes? 
+
+````
+
+<font size="4">CVD Stratum: NO</font>
+
+````{r 3a CVD stratum no}
+#repeat this within those where CVD = no
+#risk ratio
+heartCvdNo <- subset(heart, cvd=="no")
+#with specifies the data set you wish to work with
+table_female_fstat_cvd0 <- with(heartCvdNo, table(female, fstat))
+table_female_fstat_cvd0
+epi.2by2(table_female_fstat_cvd0)
+
+#incidence rate ratio
+lenfol <- tapply(heartCvdNo$lenfol, heartCvdNo$female, sum)
+events <- tapply(heartCvdNo$fstat=="died", heartCvdNo$female, sum)
+table_male_time_cvd0 <- cbind(events,lenfol)
+table_male_time_cvd0
+epi.2by2(table_male_time_cvd0)
+````
+
+*Conclusion:* In participants with a prior history of CVD, female gender was slightly associated with mortality (see RR and IRR below). In participants without a prior history of CVD, female gender was more strongly associated with mortality (see RR and IRR below). The confounding criterion of an association between the confounder and outcome in levels of the exposure therefore appears met.
+
+Risk ratio:  
+
+* RR for women/men in people with a prior history: 1.23 (0.98-1.53)  
+* RR for women/men in people without a prior history: 2.16 (1.39-3.36)
+
+IRR:  
+
+* IRR for women/men in people with a prior history: 1.38 (1.02-1.87)  
+* IRR for women/men in people without a prior history: 2.21 (1.23-3.96)
+  
+### Is gender associated with exposure(CVD)?
+
+Easy enough now that we are R experts! Make a table with gender as the exposure and cvd as the outcome. Then run epi.2by2.
+
+````{r female CVD association}
+table_female_cvd <- table(heart$female, heart$cvd)
+table_female_cvd
+epi.2by2(table_female_cvd)
+```
+
+*Conclusion:* Gender is associated with CVD status at baseline (RR=1.17, 95% CI 1.06-1.29)
+
+
+### Is gender an effect of cvd?
+
+No, because this doesn't substantively make sense. This question may be more difficult to answer for factors that could conceivly be effects of the exposure.     
+Therfefore gender meets the classical definition of a confounder.
+
+
+## Other methods to assess confounding  
+Back to the same question, but assessing if gender is a confounder using the change-in-estimate definition  
+
+a. homogeneity of stratum-specific measures
+b. crude different from adjusted
+
+**Homogeneity of stratum-specific measures**
+
+create a 3 way table: exposure, outcome, CONFOUNDER or factor you want to stratify by
+
+```{r change in estimate approach}
+tabMH <- table(heart$cvd, heart$fstat, heart$female, dnn = c("CVD", "Died", "Female"))
+tabMH
+
+#RR in strata of women:
+table_females <- epi.2by2(tabMH[,,1], method = "cohort.count")
+table_females
+
+#IRR in strata of women: subset the data
+heartFemale <- subset(heart, female=="female")
+lenfol <- tapply(heartFemale$lenfol, heartFemale$cvd, sum)
+events <- tapply(heartFemale$fstat=="died", heartFemale$cvd, sum)
+table_female_IRR <- cbind(events,lenfol)
+table_female_IRR
+
+epitab_female <- epi.2by2(table_female_IRR, method="cohort.time")
+epitab_female
+
+#RR in strata of men:
+epi.2by2(tabMH[,,2], method = "cohort.count")
+
+#IRR in strata of men: subset the data
+heartMale <- subset(heart, female=="male")
+lenfol <- tapply(heartMale$lenfol, heartMale$cvd, sum)
+events <- tapply(heartMale$fstat=="died", heartMale$cvd, sum)
+table_male_IRR <- cbind(events,lenfol)
+epitab_male <- epi.2by2(table_male_IRR, method="cohort.time")
+epitab_male
+
+```
+
+RR for cvd-failure relationship in women: 0.87 (0.63-1.19)  
+RR for cvd-failure relationship in men: 1.53 (1.05-2.23)  
+Are these similar? This is unclear because their confidence intervals overlap. However, this may reflect effect modification (different associations of the exposure-outcome relationship in levels of the covariate) rather than confounding.
+
+**Comparing crude versus adjusted measures**
+
+For the risk ratio, create an epi.2by2 table with your 3 factored table (exposure, outcome, covariate)
+
+```{r adjusted RR}
+table_MH <-  epi.2by2(tabMH, method = "cohort.count")
+table_MH
+```
+
+The crude risk ratio is 1.26 (95% CI 0.97-1.63), and the adjusted is 1.20 (0.93 to 1.54). Since they are not very different, we might conclude that there's no confounding. However, because the stratum-specific estimates are not similar to eachother, there may be effect measure modification.
+
+For the IRR, it is trickier. We have to look at the distribution of the covariate in the exposure and outcome and create our own table. 
+
+```{r adjusted IRR}
+lenfol <- tapply(heart$lenfol, list(heart$cvd, heart$female), sum)
+lenfol
+events <- tapply(heart$fstat=="died", list(heart$cvd, heart$female), sum)
+events
+
+IRR_Female <- array(c(83, 21, 132067, 33425, 87, 24, 191427, 84299),
+                   dim=c(2,2,2),
+                   dimnames=list(CVD = c("Prior CVD", "No Prior CVD"),
+                                 Outcome = c("Events", "Length of FU"),
+                                 Covariate = c("Female", "Male")))
+IRR_Female
+IRR_Female_MH <- epi.2by2(IRR_Female, method="cohort.time")
+IRR_Female_MH$massoc$IRR.strata
+IRR_Female_MH
+```
+
+The unadjusted IRR is 1.37 (0.98-1.95), while the adjusted IRR is 1.30 (0.17-0.94)
+
+**Exercise Question**
+
+Investigate whether obesity (BMI>=30) is a confounder in the association between hypertension (exposure) and death (outcome fstat).
+
+a. Create binary variables
+
+```{r question 5 create binary vars}
+#Exposure: Hypertensive (SBP≥ 160 mmHg OR DBP ≥ 90 mmHg)
+heart$hyp[heart$sysbp<160 & heart$diasbp<90] <- 0
+heart$hyp[heart$sysbp>=160 | heart$diasbp>=90] <- 1
+summary(heart$hyp)
+
+#transform into a factor variable:
+heart$hyp_fac <- factor(heart$hyp, labels=c("hypertension", "no hypertension"), levels=c(1, 0))
+
+#Confounder: Obese (BMI>=30)
+heart$obese=cut(heart$bmi, breaks=c(0,30,Inf), right=FALSE, labels =c("no", "yes"))
+heart$obese_fac=factor(heart$obese, labels=c("obese", "not obese"), levels=c("yes","no"))
+
+#create factor variable of outcome
+heart$fstat_fac <- factor(heart$fstat, labels=c("died", "alive"), levels= c("died", "alive"))
+```
+
+b. check C->Y within strata of exposure
+
+```{r}
+#create subset, as in class examples, or create a three way table of (confounder, outcome, exposure) and look at stratum specific estimates
+table_conf <- table(heart$obese_fac, heart$fstat_fac, heart$hyp_fac)
+table_conf
+
+
+conf <- epi.2by2(table_conf, method="cohort.count")
+conf$massoc$RR.strata.wald
+summary(conf)
+```
+
+In people with hypertension, obesity is negatively (although insignificantly) associated with mortality (RR 0.71, 95% CI 0.47, 1.10). In people without hypertension, obesity is also negatively associated with mortality (RR 0.54, 95% CI 0.34-0.86). C appears to be associated with outcome
+
+c. Check C->E at baseline 
+```{r}
+table_obese_hyp <- table(heart$obese_fac, heart$hyp_fac)
+epi.2by2(table_obese_hyp)
+```
+
+Obesity is associated with a 52% higher risk of having hypertension at baseline (95% CI 1.24-2.86).
+
+Is C an effect of E? Obesity might be an effect of hypertension, but it is not clear. 
+
+There may be confounding in this study...  
+
+d. Check confounding using change-in-estimate method
+
+```{r change in estimate}
+#create the required table
+tab_hyp_fstat_obe <- table(heart$hyp_fac, heart$fstat_fac, heart$obese_fac)
+epi.2by2(tab_hyp_fstat_obe[,,1], method="cohort.count")
+epi.2by2(tab_hyp_fstat_obe[,,2], method="cohort.count")
+
+epi.2by2(tab_hyp_fstat_obe, method="cohort.count")
+```
+
+Not a big change in estimate, which suggests that obesity does not strongly confound this relaionship.  
+
+e. How would you adjust for obesity using i) stratification? 
+
+```{r stratified est}
+table_str <- epi.2by2(tab_hyp_fstat_obe, method="cohort.count")
+table_str$massoc$RR.strata.wald
+
+```
+In participants with obesity, hypertension is not associated with obesity (RR =1.03, 95% CI 0.57-1.84). In participants without obesity, hypertension is associated witha decreased risk of mortality (RR 0.78, 95% CI 0.62-0.98). You can make conclusions on the relationship in different strata of obesity.
+
+e. How would you adjust for obesity using ii) Mantel-Haenzsel?
+```{r stratified estimate}
+table_str <- epi.2by2(tab_hyp_fstat_obe, method="cohort.count")
+table_str
+```
+The risk of mortality for someone with hypertension at baseline is 0.82 (95% 0.66-1.01) when adjusted for obesity.  
+
+f. What is the population weighted sum of the stratum specific PAFs? Try using both methods
+
+*Method 1*
+
+```{r saving RRs}
+#crude PAF
+tab_hyp <- table(heart$hyp_fac, heart$fstat_fac) 
+RR_crude <- 0.77
+prop_c_exp <- tab_hyp[1,1]/(tab_hyp[1,1]+tab_hyp[2,1])
+crude_PAF <- (prop_c_exp*(RR_crude-1))/RR_crude
+round(crude_PAF,2)
+
+# remember, the crude PAF formula is reliant on the assumption that there are no confounders
+
+#formula for stratified analysis? 
+# PAF(adjusted) = (prop cases confounder=1 * PAF confounder=1) / (prop cases confounder = 0 * PAF confounder = 0)
+ 
+#save the required RRs
+#PAF in obese strata
+obese_PAF_RR=epi.2by2(tab_hyp_fstat_obe, method="cohort.count")$massoc$PAFRisk.strata[1,1]
+obese_PAF_RR
+
+#PAF in non-obese strata
+nonobese_PAF_RR=epi.2by2(tab_hyp_fstat_obe, method="cohort.count")$massoc$PAFRisk.strata[2,1]
+nonobese_PAF_RR
+```
+
+
+```{r prop obese, message=FALSE}
+#getting proportions of cases in obese/non-obese strata
+
+#percent of cases that are obese/non-obese
+percent <- table(heart$obese_fac, heart$fstat_fac)
+percent
+#obese are first, so we get the % of obese cases
+percent_obese_case <- (percent[[1,1]])/(percent[[1,1]]+percent[[2,1]])
+
+#nonobese are second, so we get the % of nonobese cases
+percent_nonobese_case <- (percent[[2,1]])/(percent[[1,1]]+percent[[2,1]])
+```
+
+Calculate PAF
+
+```{r}
+# weighted average of stratum specific PAF
+PAF <- percent_obese_case*obese_PAF_RR + percent_nonobese_case*nonobese_PAF_RR
+PAF
+```
+
+PAF is the proportional reduction in average disease risk over a specified time interval that would be achieved by eliminating the exposure(s) of interest from the population while distributions of other risk factors in the population remain unchanged. Note that this is a negative PAF. It suggests that 7.4% of deaths in the population occurred because hypertension was ABSENT, adjusting for obesity. 
+
+
+*Method 2*
+
+```{r RR method 2, meittenin}
+# PAF = (fraction of cases exposed* (RR(adjusted)-1))/RR(adjusted)
+# use RR adjusted for obesity
+RR_mh <- table_str$massoc$RR.mh[[1]]
+PAF2 <- (percent_obese_case*(RR_mh-1))/RR_mh
+PAF2
+```
+
+Note that this is a negative PAF. It suggests that 3.5% of deaths in the population occurred because hypertension was ABSENT, adjusting for obesity. 

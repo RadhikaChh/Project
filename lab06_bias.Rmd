@@ -1,0 +1,272 @@
+---
+title: "lab 6"
+author: "J Brophy"
+date: '2019-01-14'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Lab # 6
+
+Recall from previous labs where we used the `heart` data and the `table` function which builds a contingency table of the counts at each combination of factor levels. The `epi.2by2` function computes summary measures of risk and a chi-squared test for difference in the observed proportions
+from count data presented in a 2 by 2 table. With multiple strata the function returns crude
+and Mantel-Haenszel adjusted measures of association and chi-squared tests of homogeneity.
+```{r}
+# from last week
+#read the dataset
+library(epiR)
+
+heart <- read.csv("heart.csv")
+
+#create binary variables
+heart$female <- factor(heart$gender, labels=c("female", "male"), levels= c(1,0))
+heart$fstat <- factor(heart$fstat, labels=c("died", "alive"), levels= c("dead", "alive"))
+heart$cvd <- factor(heart$cvd, labels=c("yes", "no"), levels=c("yes", "no"))
+
+tabMH <- table(heart$cvd, heart$fstat, heart$female, dnn = c("CVD", "Died", "Female"))
+tabMH
+
+table_MH <-  epi.2by2(tabMH, method = "cohort.count")
+table_MH
+
+# Calculating the adjusted PAF using the first method (stratification + weighted average)
+#percent of cases that are male/female
+percent <- table(heart$female, heart$fstat) 
+percent
+
+#females are first, so we get the % of females cases
+#females with outcome over all cases
+percent_female <- (percent[[1,1]])/(percent[[1,1]]+percent[[2,1]]) 
+percent_female
+
+#males are second, so we get the % of males cases
+#males with outcome over all cases
+percent_male <- (percent[[2,1]])/(percent[[1,1]]+percent[[2,1]]) 
+percent_male
+
+table_MH$massoc$PAFRisk.strata
+
+#save the PAF variables to "objects"
+female_PAF_RR <- table_MH$massoc$PAFRisk.strata[1,1]
+male_PAF_RR <- table_MH$massoc$PAFRisk.strata[2,1]
+
+PAF_RR = percent_female*female_PAF_RR + percent_male*male_PAF_RR
+PAF_RR
+
+```
+
+Again from last week
+
+```{r adjusted IRR}
+lenfol <- tapply(heart$lenfol, list(heart$cvd, heart$female), sum)
+lenfol
+events <- tapply(heart$fstat=="died", list(heart$cvd, heart$female), sum)
+events
+
+IRR_Female <- array(c(83, 21, 132067, 33425, 87, 24, 191427, 84299),
+                   dim=c(2,2,2),
+                   dimnames=list(CVD = c("Prior CVD", "No Prior CVD"),
+                                 Outcome = c("Events", "Length of FU"),
+                                 Covariate = c("Female", "Male")))
+IRR_Female
+IRR_Female_MH <- epi.2by2(IRR_Female, method="cohort.time")
+IRR_Female_MH$massoc$IRR.strata
+IRR_Female_MH
+
+IRR_Female_MH$massoc$PAFRate.strata.wald
+female_PAF_IRR <- IRR_Female_MH$massoc$PAFRate.strata.wald[1,1]
+male_PAF_IRR <- IRR_Female_MH$massoc$PAFRate.strata.wald[2,1]
+
+PAF_IRR = percent_female*female_PAF_IRR[[1]] + percent_male*male_PAF_IRR[[1]]
+PAF_IRR
+```
+
+```{r}
+
+# method 2 
+
+percent_exp <- table(heart$cvd, heart$fstat)
+percent_exp
+
+percent_exp_cases <- percent_exp[[1,1]]/(percent_exp[[1,1]] + percent_exp[[2,1]])
+percent_exp_cases
+```
+
+Get the MH pooled RR
+Recall that table_MH is the table of: exposed: prior CVD, outcome: dead/alive, covariate: gender 
+
+```{r}
+table_MH
+```
+
+We can save the MH-adjusted RR and use it in Meittenan’s equation    
+$$ PAF = \dfrac{p_{ce} * (RR -1)}{RR}$$
+
+```{r}
+#save the pooled RR as an object
+table_MH <- epi.2by2(tabMH, method = "cohort.count") 
+RR_MH <- table_MH$massoc$RR.mh[[1]]
+RR_MH
+
+#Now calculate Meittenan's equation
+PAF2 <- ((percent_exp_cases)*(RR_MH-1))/RR_MH 
+PAF2
+```
+
+## Bias adjustment
+
+This lab will explore bias adjustments. The primary packages to be used are `episensr` and `epiR`. `episensr`
+contains functions for ```basic sensitivity analysis of the observed relative risks adjusting
+for unmeasured confounding and misclassification of the
+exposure/outcome, or both. It follows the bias analysis methods and
+examples from the book by Lash T.L, Fox M.P, and Fink A.K.
+``Applying Quantitative Bias Analysis to Epidemiologic Data''.``` 
+
+```{r}
+library(episensr)
+
+lowbirth <- read.csv("lowbirth.csv")
+head(lowbirth)
+
+# making factors in the right order
+
+lowbirth$smoke_fac <- factor(lowbirth$smoke, labels=c("Smoker", "Non-smoker"), levels=c(1,0))
+lowbirth$low_fac <- factor(lowbirth$low, labels=c("Low", "Normal"), levels=c(1,0))
+
+out_table <- selection(case=lowbirth$low_fac, exposed=lowbirth$smoke_fac, bias_parms = c(.9, .8, .4, .5))
+out_table
+# can also see what the modified (corrected) table looks like
+str(out_table)
+out_table$corr.data
+```
+## Exercise 1
+
+A team conducted a case control study on CVD and cheeseburger consumption. 
+```{r}
+cvd <- matrix(c(845, 1765, 4478, 6942), nrow=2, ncol=2, byrow=TRUE)
+rownames(cvd) <- c("Cases", "Controls")
+colnames(cvd) <- c("Exposed","Unexposed")
+
+```
+You find out that the probabilities of selecting cases and controls into the study are: 
+ 30% among cases
+70% among controls
+How much bias  was there in the original study?
+
+```{r}
+selection(cvd, bias_parms=c(.3, .3, .7, .7))
+
+```
+
+
+OR observed == OR bias corrected
+
+Is this a mistake?
+No! The observed estimate (OR=0.74) was unbiased (corrected OR=0.74) because selection probabilities were non-differential w.r.t. exposure status, meaning that exposed cases were selected with the same probability as unexposed unexposed cases. 
+
+## Misclassification
+
+Can do the same exercise if exposure or outcome status was misclassified
+```{r}
+table(lowbirth$low_fac, lowbirth$smoke_fac)
+
+# To get true cell counts from observed cell counts, enter misclassification as: c(Sensitivity in exposed, Sensitivity in unexposed, Specificity in exposed, Specificity in unexposed)
+
+misclassification(exposed=lowbirth$smoke_fac, case=lowbirth$low_fac, bias_parms=c(.9, .9, .8, .8), type="exposure")
+
+```
+
+The observed OR was biased downward or towards the null. This is because the degree of misclassification of exposure is equivalent in the diseased vs non-diseased groups (i.e., non-differential misclassification of exposure).
+
+```{r}
+mis <- misclassification(exposed=lowbirth$smoke_fac, case=lowbirth$low_fac, bias_parms=c(.9, .9, .8, .8), type="exposure")
+mis$corr.data
+```
+
+
+## Uncontrolled confounding
+
+In this case-control study on LBW relative to smoking, suppose information maternal education is missing
+How much bias is introduced by failing to include maternal education in the analysis?
+Assumptions:
+OR relating ME to LBW is 1.5 (from the literature)
+Prevalence of higher education among smokers=0.3
+Prevalence of higher education among non-smokers = 0.5
+
+```{r}
+confounders(exposed=lowbirth$smoke_fac, case=lowbirth$low_fac, type=c("OR"), bias_parms = c(1.5, 0.3, 0.5))
+
+```
+The observed estimate (OR=2.88) was biased downward (corrected OR=3.14). Therefore, omitting to include maternal education resulted in an 8% bias towards the null.       
+
+Residual confounding may occur if: 
+Unmeasured,
+Inaccurately measured
+Misclassified
+Crudely categorized confounders
+Eg, Collapsing continuous variables into categories
+Sometimes can assess impact of residual confounding by changing categorization of confounder (creating finer groups)
+
+## Exercise 2
+Using LBW & smoking dataset, create a categorical variable for age with two and three levels:
+	a) two levels: < 22 and ≥22
+	b) three levels: < 18, ≥18 to <25; ≥ 25
+In both situations, compute the odds ratio standardized to the age distribution in the exposed group.
+Is there evidence of residual confounding by age?
+
+```{r}
+lowbirth$agecat2 <- factor(cut(lowbirth$age, c(0, 22, Inf), right=FALSE), labels=c("under 22", "22+"))
+
+lowbirth$agecat3 <- factor(cut(lowbirth$age, c(0, 18, 25, Inf), labels=c("under 18", "over 18, under 25","25+"), right=FALSE))
+
+tab_smoke_low_age2 <- with(lowbirth, table(smoke_fac, low_fac, agecat2))
+epi_stand_age2 <- epi.2by2(tab_smoke_low_age2, method="case.control")
+
+epi_stand_age2
+epi_stand_age2$massoc$OR.strata.wald
+
+```
+
+
+ 
+## Adjusting using standardized measures
+
+```{r}
+install.packages("epimisc_0.12.tar.gz", repos = NULL, type = "source")
+library(epimisc)
+std.measure(tab_smoke_low_age2, conflev=0.95, method="internal", measure="risk.ratio")
+
+#3 level variable table
+tab_smoke_low_age3 <- with(lowbirth, table(smoke_fac, low_fac, agecat3))
+
+epi_stand_age3 <- epi.2by2(tab_smoke_low_age3, method="case.control")
+epi_stand_age3
+# to get individual strata
+epi_stand_age3$massoc$OR.strata.wald
+
+#to get standardized measure. Only available for risk ratio and risk difference currently.
+library(epimisc)
+?std.measure
+std.measure(tab_smoke_low_age3, conflev=0.95, method="internal", measure="risk.ratio")
+
+```
+
+
+```{r}
+#3 level variable table
+tab_smoke_low_age3 <- with(lowbirth, table(smoke_fac, low_fac, agecat3))
+
+epi_stand_age3 <- epi.2by2(tab_smoke_low_age3, method="case.control")
+epi_stand_age3
+# to get individual strata
+epi_stand_age3$massoc$OR.strata.wald
+
+#to get standardized measure. Only available for risk ratio and risk difference currently.
+library(epimisc)
+std.measure(tab_smoke_low_age3, conflev=0.95, method="internal", measure="risk.ratio")
+
+```
+
